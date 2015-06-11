@@ -16,7 +16,9 @@ QuadTelemetry::QuadTelemetry(QObject *parent) : QObject(parent),
     connect(m_checkDataTimer, &QTimer::timeout, this, &QuadTelemetry::sendDataRequest);
     connect(m_hidWrapper, &HIDAPIWrapper::dataReceived, this, &QuadTelemetry::dataReceived);
 
-    m_hidWrapper->configurePollingTimer(1);
+    //m_hidWrapper->configurePollingTimer(1);
+
+    m_hidWrapper->configureAsyncTransfer();
 }
 
 QuadTelemetry::~QuadTelemetry()
@@ -43,7 +45,8 @@ void QuadTelemetry::sendDataRequest()
 
 
 
-void QuadTelemetry::dataReceived(const QByteArray & dataPacket)
+void QuadTelemetry::dataReceived(const unsigned char *receivedData, size_t lenght)
 {
-    parseData(dataPacket);
+    QByteArray rcvdData(reinterpret_cast<const char*>(receivedData), int(lenght));
+    parseData(rcvdData);
 }

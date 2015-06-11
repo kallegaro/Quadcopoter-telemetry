@@ -20,8 +20,10 @@ public:
 
     ~HIDAPIWrapper();
 
+    void receivedAsyncCallBack();
+
 signals:
-    void dataReceived(const QByteArray & dataPacket);
+    void dataReceived(const unsigned char *receivedData, size_t lenght);
 
     void sendComplete(size_t lastPacketSentSize);
     void senrErr();
@@ -30,13 +32,16 @@ public slots:
     void sendData(const QByteArray &toSendData);
     void configurePollingTimer(int checkInterval);
 
-    void pollingTimerTimeout();
+    bool configureAsyncTransfer(void);
+
+    void pollingTimerTimeout(void);
 
 private:
     quint16 m_vid;
     quint16 m_pid;
 
     bool m_isOpen;
+    bool m_asyncConfigured;
 
     //
     size_t m_inputBufferSize;
@@ -44,8 +49,8 @@ private:
 
     quint16 m_currentSendIndex;
 
-    QByteArray *m_inputBuffer;
-    QByteArray *m_outputBuffer;
+    unsigned char *m_inputBuffer;
+    unsigned char *m_outputBuffer;
 
     int m_lastSentPacketSize;
 
@@ -55,6 +60,10 @@ private:
     //
     libusb_device_handle *m_devHandler;
     libusb_context *m_ctx;
+
+    //
+    libusb_transfer *m_receptionTransferHandler;
+    libusb_transfer *m_transmissionTransferHandler;
 
     //---- Constantes de operação.
     static const size_t INPUT_BUFFER_SIZE = 64;
@@ -68,4 +77,5 @@ private:
     static const unsigned char INTERRUPT_IN_ENDPOINT = 0x81;
 };
 
+extern "C" void receivedAsyncData(struct libusb_transfer *transfer);
 #endif // HIDAPIWRAPPER_H

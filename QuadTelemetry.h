@@ -32,7 +32,7 @@ signals:
     void magnetometerUpdated(const Sensor &a);
 
 public slots:
-    void dataReceived(const QByteArray &dataPacket);
+    void dataReceived(const unsigned char *receivedData, size_t lenght);
     void toggleLeds();
     void sendDataRequest();
 

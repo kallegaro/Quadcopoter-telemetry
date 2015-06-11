@@ -5,13 +5,16 @@ HIDAPIWrapper::HIDAPIWrapper(quint16 vid, quint16 pid, size_t inputBufferSize, s
     m_vid(vid),
     m_pid(pid),
     m_isOpen(false),
+    m_asyncConfigured(false),
     m_inputBufferSize(inputBufferSize),
     m_outputBufferSize(outpuBufferSize),
     m_currentSendIndex(0),
-    m_inputBuffer(new QByteArray(m_inputBufferSize, 0x00)),
-    m_outputBuffer(new QByteArray(m_outputBufferSize, 0x00)),
+    m_inputBuffer(new unsigned char[INPUT_BUFFER_SIZE]),
+    m_outputBuffer(new unsigned char[OUTPUT_BUFFER_SIZE]),
     m_lastSentPacketSize(0),
-    m_dataCheckTimer(NULL)
+    m_dataCheckTimer(NULL),
+    m_receptionTransferHandler(NULL),
+    m_transmissionTransferHandler(NULL)
 {
     int r;
 
@@ -68,33 +71,15 @@ HIDAPIWrapper::HIDAPIWrapper(quint16 vid, quint16 pid, size_t inputBufferSize, s
         m_isOpen &= true;
     }
 
-//    r = libusb_interrupt_transfer(m_devHandler, 0x01, data, 1, &lenght, 1000);
-//    if(r >= 0) {
-//        qDebug() << "Dados enviados: " << lenght;
-//    }
-
-//    r = libusb_interrupt_transfer(m_devHandler, 0x81, data, 64, &lenght, 1000);
-
-//    if(r >= 0) {
-//        if(lenght > 0) {
-//            qDebug() << "Li alguma coisa: " << lenght;
-//        }else {
-//            qDebug() << "Não consegui li nada";
-//        }
-//    }else if( r < 0) {
-//        qDebug() << "Erro na leitura: " << r;
-//    }
 }
 
 void HIDAPIWrapper::sendData(const QByteArray &toSendData)
 {
-    unsigned char *data = new unsigned char[toSendData.size()];
-
     if(toSendData.size() < static_cast<int>(MAX_OUTPUT_SIZE)) {
 
-        memcpy(data, toSendData.constData(), toSendData.size());
+        memcpy(m_outputBuffer, toSendData.constData(), toSendData.size());
 
-        int r = libusb_bulk_transfer(m_devHandler, INTERRUPT_OUT_ENDPOINT, data, toSendData.size(), &m_lastSentPacketSize, 50);
+        int r = libusb_interrupt_transfer(m_devHandler, INTERRUPT_OUT_ENDPOINT, m_outputBuffer, toSendData.size(), &m_lastSentPacketSize, 100);
 
         if(r >= 0) {
             //qDebug() << "Dados enviados. número de bytes enviados: " << m_lastSentPacketSize;
@@ -106,8 +91,6 @@ void HIDAPIWrapper::sendData(const QByteArray &toSendData)
     }else {
 
     }
-
-    delete data;
 }
 
 void HIDAPIWrapper::configurePollingTimer(int checkInterval)
@@ -119,37 +102,18 @@ void HIDAPIWrapper::configurePollingTimer(int checkInterval)
     m_dataCheckTimer->start(checkInterval);
 }
 
-void HIDAPIWrapper::pollingTimerTimeout()
+void HIDAPIWrapper::pollingTimerTimeout(void)
 {
-    unsigned char *data = new unsigned char[m_inputBufferSize];
     int lenght = 0;
 
-    int r = libusb_interrupt_transfer(m_devHandler, INTERRUPT_IN_ENDPOINT, data, m_inputBufferSize, &lenght, 50);
+    int r = libusb_interrupt_transfer(m_devHandler, INTERRUPT_IN_ENDPOINT, m_inputBuffer, m_inputBufferSize, &lenght, 50);
 
     if(r >= 0) {
         if( lenght > 0 ) {
-            m_inputBuffer->clear();
-            m_inputBuffer->insert(0, (const char*)(data), lenght);
-
             //qDebug() << "Teste: " << data;
-            emit dataReceived(*m_inputBuffer);
-        }else {
-            qDebug() << "Sem dados para recuperar";
+            emit dataReceived(m_inputBuffer, lenght);
         }
-    }else {
-        qDebug() << "Problema de recepção";
     }
-//    if(r >= 0) {
-//        if(lenght > 0) {
-//            qDebug() << "Li alguma coisa: " << lenght;
-//        }else {
-//            qDebug() << "Não consegui li nada";
-//        }
-//    }else if( r < 0) {
-//        qDebug() << "Erro na leitura: " << r;
-//    }
-
-    delete(data);
 }
 
 HIDAPIWrapper::~HIDAPIWrapper()
@@ -158,4 +122,42 @@ HIDAPIWrapper::~HIDAPIWrapper()
     libusb_close(m_devHandler);
 
     libusb_exit(m_ctx);
+
+    //----- Desaloca os recursos utilizados quando se realizou uma transferência
+    if (m_asyncConfigured) {
+        libusb_cancel_transfer(m_receptionTransferHandler);
+        libusb_free_transfer(m_receptionTransferHandler);
+    }
+
+}
+
+bool HIDAPIWrapper::configureAsyncTransfer()
+{
+    m_receptionTransferHandler = libusb_alloc_transfer(0);
+
+    libusb_fill_interrupt_transfer(m_receptionTransferHandler, m_devHandler, INTERRUPT_IN_ENDPOINT, m_inputBuffer, INPUT_BUFFER_SIZE, receivedAsyncData, this, 500);
+
+    int r = libusb_submit_transfer(m_receptionTransferHandler);
+
+    if(r >= 0) {
+        qDebug() << "Transferência configurada com suncesso";
+        m_asyncConfigured = true;
+    }
+
+    return m_asyncConfigured;
+}
+
+void receivedAsyncData(libusb_transfer *transfer)
+{
+    HIDAPIWrapper &wrapper = *static_cast<HIDAPIWrapper *>(transfer->user_data);
+
+    wrapper.receivedAsyncCallBack();
+}
+
+void HIDAPIWrapper::receivedAsyncCallBack()
+{
+    libusb_submit_transfer(m_receptionTransferHandler);
+
+    if (m_receptionTransferHandler->status == LIBUSB_TRANSFER_COMPLETED)
+        emit dataReceived(m_inputBuffer, m_receptionTransferHandler->actual_length);
 }
